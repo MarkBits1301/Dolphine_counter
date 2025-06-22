@@ -1,0 +1,224 @@
+//SDCARD
+#include <SPI.h>
+#include <SD.h>
+
+#define SD_CS 5  // Chip select pin for SD card
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  Serial.println("Initializing SD card...");
+
+  if (!SD.begin(SD_CS)) {
+    Serial.println("❌ SD card initialization failed!");
+    return;
+  }
+
+  Serial.println("✅ SD card initialized.");
+
+  // Create or overwrite file
+  File file = SD.open("/test.txt", FILE_WRITE);
+  if (file) {
+    file.println("Hello from ESP32!");
+    file.close();
+    Serial.println("📁 File written.");
+  } else {
+    Serial.println("❌ Failed to write file.");
+    return;
+  }
+
+  // Read the file
+  file = SD.open("/test.txt");
+  if (file) {
+    Serial.println("📖 Reading file:");
+    while (file.available()) {
+      Serial.write(file.read());
+    }
+    file.close();
+    Serial.println("\n✅ File read complete.");
+  } else {
+    Serial.println("❌ Failed to open file for reading.");
+  }
+}
+
+void loop() {
+  // Nothing here
+}
+
+//DOLPHIN SENSOR SD LOGGING
+#include <SPI.h>
+#include <SD.h>
+
+#define SENSOR_PIN    35   // Output of 6N137
+#define SD_CS         5    // SD card CS pin
+
+unsigned long lastLogTime = 0;
+volatile unsigned long rotationCount = 0;
+bool previousState = HIGH;
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(SENSOR_PIN, INPUT);
+
+  // SD card init
+  if (!SD.begin(SD_CS)) {
+    Serial.println("❌ SD card init failed!");
+    while (true);
+  }
+  Serial.println("✅ SD card initialized.");
+
+  // Create log file with header
+  File logFile = SD.open("/dolphin_log.csv", FILE_WRITE);
+  if (logFile) {
+    logFile.println("Timestamp(ms),RotationCount");
+    logFile.close();
+  } else {
+    Serial.println("❌ Failed to create log file.");
+  }
+}
+
+void loop() {
+  bool currentState = digitalRead(SENSOR_PIN);
+
+  if (currentState == HIGH && previousState == LOW) {
+    rotationCount++;
+    logToSD(rotationCount);
+  }
+
+  previousState = currentState;
+}
+
+void logToSD(unsigned long count) {
+  File logFile = SD.open("/dolphin_log.csv", FILE_APPEND);
+  if (logFile) {
+    logFile.print(millis());
+    logFile.print(",");
+    logFile.println(count);
+    logFile.close();
+    Serial.print("✅ Count logged: ");
+    Serial.println(count);
+  } else {
+    Serial.println("❌ Failed to log count.");
+  }
+}
+
+
+//WITH LCD
+#include <SPI.h>
+#include <SD.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// 🧠 Configuration
+#define SENSOR_PIN     35
+#define SD_CS           5
+#define I2C_SDA        21
+#define I2C_SCL        22
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // 16x2 LCD
+
+// 📊 Variables
+unsigned long lastRPMTime = 0;
+unsigned long rotationCount = 0;
+unsigned long rpm = 0;
+bool previousState = HIGH;
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(SENSOR_PIN, INPUT);
+
+  // LCD Init
+  Wire.begin(I2C_SDA, I2C_SCL);
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Booting...");
+
+  // SD Init
+  if (!SD.begin(SD_CS)) {
+    Serial.println("❌ SD Init Failed!");
+    lcd.setCursor(0, 1);
+    lcd.print("SD Fail");
+    while (1);
+  }
+
+  lcd.clear();
+  lcd.print("System Ready");
+
+  // Header
+  File logFile = SD.open("/dolphin_log.csv", FILE_WRITE);
+  if (logFile) {
+    logFile.println("Timestamp(ms),RotationCount,RPM");
+    logFile.close();
+  }
+
+  delay(1500);
+  lcd.clear();
+}
+
+void loop() {
+  // Pulse detection
+  bool currentState = digitalRead(SENSOR_PIN);
+  if (currentState == HIGH && previousState == LOW) {
+    rotationCount++;
+  }
+  previousState = currentState;
+
+  // Every 5 seconds: calculate RPM & log
+  if (millis() - lastRPMTime >= 5000) {
+    rpm = (rotationCount * 60) / 5;  // Convert to RPM (per 5s)
+    logToSD(rotationCount, rpm);
+    displayInfo();
+    lastRPMTime = millis();
+    rotationCount = 0;
+  }
+}
+
+void logToSD(unsigned long count, unsigned long rpmVal) {
+  File logFile = SD.open("/dolphin_log.csv", FILE_APPEND);
+  if (logFile) {
+    logFile.print(millis());
+    logFile.print(",");
+    logFile.print(count);
+    logFile.print(",");
+    logFile.println(rpmVal);
+    logFile.close();
+
+    Serial.print("📤 Logged → Count: ");
+    Serial.print(count);
+    Serial.print(" | RPM: ");
+    Serial.println(rpmVal);
+  } else {
+    Serial.println("❌ Log Failed!");
+  }
+}
+
+void displayInfo() {
+  // LCD output
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Rot: ");
+  lcd.print(rotationCount);
+  lcd.print(" RPM:");
+  lcd.print(rpm);
+
+  // SD Memory info
+  File file = SD.open("/dolphin_log.csv");
+  uint64_t used = file ? file.size() : 0;
+  if (file) file.close();
+  uint64_t total = SD.cardSize();
+
+  lcd.setCursor(0, 1);
+  lcd.print(used / 1024);
+  lcd.print("/");
+  lcd.print(total / 1024);
+  lcd.print("KB");
+
+  // Serial memory info
+  Serial.print("💾 SD Used: ");
+  Serial.print(used / 1024);
+  Serial.print(" KB / ");
+  Serial.print(total / 1024);
+  Serial.println(" KB");
+}
